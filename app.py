@@ -60,7 +60,7 @@ if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-menu = ["Add Patient", "View Patients", "Audit Logs", "Activity Analytics"]
+menu = ["Add Patient", "View Patients", "Edit Patient", "Audit Logs", "Activity Analytics"]
 choice = st.sidebar.selectbox("Menu", menu)
 
 
@@ -112,6 +112,126 @@ if choice == "Add Patient":
                     log_action(st.session_state.user_id, st.session_state.role, "ERROR", f"Failed to add patient: {str(e)}")
                 except:
                     pass
+
+
+# --------------------- Edit Patient (Admin/Receptionist) ---------------------
+if choice == "Edit Patient":
+    require_role(["admin", "receptionist"])
+    
+    st.subheader("Edit Patient Record")
+    
+    try:
+        # Fetch all patients
+        conn = get_connection()
+        patients_df = pd.read_sql_query("SELECT patient_id, name, contact, diagnosis FROM patients", conn)
+        conn.close()
+        
+        if len(patients_df) == 0:
+            st.warning("No patients in the system. Please add patients first.")
+        else:
+            # Create a selection dropdown
+            patient_options = {f"{row['patient_id']} - {row['name']}": row['patient_id'] 
+                             for _, row in patients_df.iterrows()}
+            
+            selected_patient = st.selectbox(
+                "Select Patient to Edit",
+                options=list(patient_options.keys())
+            )
+            
+            if selected_patient:
+                patient_id = patient_options[selected_patient]
+                
+                # Get current patient data
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("SELECT * FROM patients WHERE patient_id=?", (patient_id,))
+                patient = c.fetchone()
+                conn.close()
+                
+                if patient:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**Current Data:**")
+                        st.write(f"Name: {patient[1]}")
+                        st.write(f"Contact: {patient[2]}")
+                        if st.session_state.role == "admin":
+                            st.write(f"Diagnosis: {patient[3]}")
+                    
+                    with col2:
+                        st.write("**Update Data:**")
+                        new_name = st.text_input("New Name", value=patient[1])
+                        new_contact = st.text_input("New Contact", value=patient[2])
+                        
+                        # Only admin can edit diagnosis
+                        if st.session_state.role == "admin":
+                            new_diagnosis = st.text_input("New Diagnosis", value=patient[3])
+                        else:
+                            st.info("Receptionist cannot edit diagnosis (sensitive data)")
+                            new_diagnosis = patient[3]  # Keep existing diagnosis
+                    
+                    col_update, col_delete = st.columns([1, 1])
+                    
+                    with col_update:
+                        if st.button("Update Patient", type="primary"):
+                            # Validation
+                            if not new_name or not new_contact or not new_diagnosis:
+                                st.error("All fields are required.")
+                            elif len(new_contact) != 11:
+                                st.error("Contact number must be 11 digits.")
+                            else:
+                                try:
+                                    # Generate new anonymized data
+                                    anon_name = mask_name(new_name)
+                                    anon_contact = mask_contact(new_contact)
+                                    encrypted_diag = encrypt_value(new_diagnosis)
+                                    
+                                    conn = get_connection()
+                                    c = conn.cursor()
+                                    c.execute("""UPDATE patients 
+                                               SET name=?, contact=?, diagnosis=?, 
+                                                   anonymized_name=?, anonymized_contact=?, 
+                                                   encrypted_diagnosis=?
+                                               WHERE patient_id=?""",
+                                            (new_name, new_contact, new_diagnosis, 
+                                             anon_name, anon_contact, encrypted_diag, patient_id))
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    log_action(st.session_state.user_id, st.session_state.role, 
+                                             "UPDATE_PATIENT", f"Updated patient ID {patient_id}: {new_name}")
+                                    
+                                    st.success("Patient updated successfully!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating patient: {str(e)}")
+                                    log_action(st.session_state.user_id, st.session_state.role, 
+                                             "ERROR", f"Failed to update patient: {str(e)}")
+                    
+                    with col_delete:
+                        if st.session_state.role == "admin":
+                            if st.button("Delete Patient", type="secondary"):
+                                try:
+                                    conn = get_connection()
+                                    c = conn.cursor()
+                                    c.execute("DELETE FROM patients WHERE patient_id=?", (patient_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    
+                                    log_action(st.session_state.user_id, st.session_state.role, 
+                                             "DELETE_PATIENT", f"Deleted patient ID {patient_id}: {patient[1]}")
+                                    
+                                    st.success("Patient deleted successfully!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error deleting patient: {str(e)}")
+                                    log_action(st.session_state.user_id, st.session_state.role, 
+                                             "ERROR", f"Failed to delete patient: {str(e)}")
+                        else:
+                            st.info("Only admins can delete patients")
+                            
+    except Exception as e:
+        st.error(f"Error loading patient data: {str(e)}")
 
 
 # --------------------- View Patients (Role-Based View) ---------------------
