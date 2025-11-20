@@ -4,16 +4,20 @@ from logs import log_action
 
 
 def login(username, password):
-    conn = get_connection()
-    c = conn.cursor()
+    try:
+        conn = get_connection()
+        c = conn.cursor()
 
-    c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-    user = c.fetchone()
-    conn.close()
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+        user = c.fetchone()
+        conn.close()
 
-    if user:
-        return {"user_id": user[0], "username": user[1], "role": user[3]}
-    return None
+        if user:
+            return {"user_id": user[0], "username": user[1], "role": user[3]}
+        return None
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        return None
 
 def require_role(allowed_roles):
     role = st.session_state.get("role", None)
